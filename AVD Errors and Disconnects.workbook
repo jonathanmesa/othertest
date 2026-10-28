@@ -1,0 +1,345 @@
+{
+  "fallbackResourceIds": [],
+  "items": [
+    {
+      "type": 1,
+      "name": "Introduction",
+      "content": {
+        "json": "# AVD errors, disconnects, and incident timeline\r\n**Purpose:** find the exact error message, who was affected, when the connection ended or reconnected, and what evidence to investigate next. No performance or before/after comparison panels.\r\n\r\n1. Select the workspace, UTC observation window, host pool, and affected user.\r\n2. Check **Diagnostic coverage** before interpreting empty results.\r\n3. Open **Error patterns and investigation guidance** and **Exact error messages**.\r\n4. Copy a CorrelationId into **Connection / activity ID** to inspect **UTC event timeline**. Clear it to return to the whole selected scope.\r\n\r\n**Evidence boundaries:** `Completed` records a user/server disconnect, including normal endings; it is not automatically an unexpected drop or an error. A recorded error does not necessarily mean connection failure. `PredecessorConnectionId` is explicit auto-reconnect evidence, not proof of a particular network fault. Errors/checkpoints are correlated by full resource ID and nonempty CorrelationId, never by user alone. Orphan errors remain visible when all users are selected; an error without a known user cannot match a specific user filter.\r\n\r\n**Why it happened:** the original code, message, source, operation, service-error flag, and checkpoint parameters are evidence. Investigation hints below are keyword-based hypotheses, NOT a confirmed root cause. Temporal proximity is NOT causation. Confirm with client/session-host logs, policy, identity, network, and service-health evidence. All times are UTC."
+      }
+    },
+    {
+      "type": 9,
+      "name": "Workspace and time",
+      "content": {
+        "style": "pills",
+        "parameters": [
+          {
+            "id": "ab724af8-29c6-40c3-8db0-2b388dbd5287",
+            "version": "KqlParameterItem/1.0",
+            "typeSettings": {
+              "showDefault": false,
+              "resourceTypeFilter": {
+                "microsoft.operationalinsights/workspaces": true
+              },
+              "additionalResourceOptions": [
+                "value::1"
+              ]
+            },
+            "type": 5,
+            "isRequired": true,
+            "multiSelect": false,
+            "name": "Workspace",
+            "label": "Log Analytics workspace",
+            "value": ""
+          },
+          {
+            "id": "44df0f9b-3822-490c-b973-15c7f64d849e",
+            "value": {
+              "durationMs": 86400000
+            },
+            "name": "TimeRange",
+            "isRequired": true,
+            "label": "Observation window (UTC)",
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ],
+              "allowCustom": true
+            },
+            "type": 4,
+            "version": "KqlParameterItem/1.0"
+          }
+        ],
+        "version": "KqlParameterItem/1.0"
+      }
+    },
+    {
+      "type": 9,
+      "name": "Incident filters",
+      "content": {
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "style": "pills",
+        "parameters": [
+          {
+            "delimiter": ",",
+            "queryType": 0,
+            "timeContextFromParameter": "TimeRange",
+            "quote": "'",
+            "name": "HostPool",
+            "value": [
+              "All"
+            ],
+            "type": 2,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "id": "bdac7613-8fde-46fb-9d6f-6a9c45e482a8",
+            "multiSelect": true,
+            "query": "union (print value=\"All\", label=\"All resources / host pools\"),\r\n(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, _ResourceId:string)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated {TimeRange}\r\n    | extend value=tolower(_ResourceId)\r\n    | where isnotempty(value)\r\n    | distinct value\r\n    | project value, label=coalesce(extract(@\"(?i)/hostpools/([^/]+)\", 1, value), value)\r\n)\r\n| order by label asc",
+            "isRequired": true,
+            "label": "Host pool / resource",
+            "version": "KqlParameterItem/1.0"
+          },
+          {
+            "delimiter": ",",
+            "queryType": 0,
+            "timeContextFromParameter": "TimeRange",
+            "quote": "'",
+            "name": "Users",
+            "value": [
+              "All"
+            ],
+            "type": 2,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "id": "cf43ef35-2c39-4d54-83d9-2ba48eab8b43",
+            "multiSelect": true,
+            "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nunion (print value=\"All\", label=\"All users (including unattributed events)\"),\r\n(Raw | where isnotempty(UserName) | distinct value=UserName | project value, label=value)\r\n| order by label asc",
+            "isRequired": true,
+            "label": "Affected users",
+            "version": "KqlParameterItem/1.0"
+          },
+          {
+            "version": "KqlParameterItem/1.0",
+            "value": "",
+            "name": "CorrelationId",
+            "type": 1,
+            "label": "Connection / activity ID (optional exact match)",
+            "isRequired": false,
+            "id": "6ba3d80c-7867-43cb-a25e-fe4cb3ea6b55"
+          }
+        ],
+        "version": "KqlParameterItem/1.0"
+      }
+    },
+    {
+      "type": 3,
+      "name": "Diagnostic coverage",
+      "content": {
+        "description": "Always inspect this first. Pool/window counts precede user and activity filters. Zero rows cannot distinguish no incidents from missing collection; absent tables produce union warnings.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nlet Available = Raw | summarize RowsInPoolWindow=count(), LastSeenUTC=max(TimeGenerated) by EventTable;\r\nlet Selected = Events | summarize SelectedRows=count(),\r\n    MissingActivityId=countif(isempty(CorrelationId)),\r\n    UnknownUser=countif(isempty(UserName)) by EventTable;\r\ndatatable(EventTable:string)[\"WVDConnections\", \"WVDErrors\", \"WVDCheckpoints\"]\r\n| join kind=leftouter Available on EventTable\r\n| join kind=leftouter Selected on EventTable\r\n| extend RowsInPoolWindow=coalesce(RowsInPoolWindow, long(0)),\r\n    SelectedRows=coalesce(SelectedRows, long(0)),\r\n    MissingActivityId=coalesce(MissingActivityId, long(0)), UnknownUser=coalesce(UnknownUser, long(0))\r\n| extend Coverage=case(RowsInPoolWindow == 0,\r\n    \"NO ROWS: table absent, diagnostics disabled, no events, retention, or pool/time scope; inspect query warnings\",\r\n    SelectedRows == 0, \"Rows exist but user/activity filters exclude them\", \"Records available; completeness not guaranteed\")\r\n| project EventTable, RowsInPoolWindow, SelectedRows, LastSeenUTC, MissingActivityId, UnknownUser, Coverage",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Diagnostic coverage",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "Incident record counts",
+      "content": {
+        "description": "Scope summary only. Do not equate errors, disconnects, and reconnects, or treat zero counts as healthy without checking coverage.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nEvents\r\n| summarize ErrorRecords=countif(EventTable == \"WVDErrors\"),\r\n    ServiceErrorRecords=countif(EventTable == \"WVDErrors\" and ServiceError == true),\r\n    DisconnectRecords=countif(EventTable == \"WVDConnections\" and State =~ \"Completed\"),\r\n    AutoReconnectRecords=countif(EventTable == \"WVDConnections\" and isnotempty(PredecessorConnectionId)),\r\n    CheckpointRecords=countif(EventTable == \"WVDCheckpoints\")\r\n| extend Interpretation=\"Record counts, not unique incidents or failure rates. Completed includes normal disconnects; reconnect activity can emit several state records.\"",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Incident record counts",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "Errors and disconnects over time",
+      "content": {
+        "description": "15-minute UTC buckets of recorded events. Gaps are not zero-filled. Coincident spikes are investigation leads, not proof of causation.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nEvents\r\n| summarize ErrorRecords=countif(EventTable == \"WVDErrors\"),\r\n    DisconnectRecords=countif(EventTable == \"WVDConnections\" and State =~ \"Completed\"),\r\n    AutoReconnectRecords=countif(EventTable == \"WVDConnections\" and isnotempty(PredecessorConnectionId))\r\n    by TimeUTC=bin(TimeGenerated, 15m)\r\n| order by TimeUTC asc",
+        "visualization": "timechart",
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Errors and disconnects over time",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "Error patterns and investigation guidance",
+      "content": {
+        "description": "Grouped by the full error signature, including the original message. Hypotheses are keyword-based and can overlap; first matching hint wins. KnownUsers is capped at 100; exact records remain below.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nlet ErrorsWithGuidance =\r\n    Events\r\n    | where EventTable == \"WVDErrors\"\r\n    | extend EvidenceText=tolower(strcat(CodeSymbolic, \" \", Message))\r\n    | extend InvestigationHint=case(\r\n        EvidenceText has_any (\"authentication\", \"credential\", \"credentials\", \"logon\", \"aadsts\", \"unauthorized\"),\r\n            \"Identity/sign-in hypothesis: check Entra sign-in logs, MFA/Conditional Access, credentials, and session-host logon events.\",\r\n        EvidenceText has_any (\"fslogix\", \"profile\", \"vhd\", \"vhdx\"),\r\n            \"Profile hypothesis: check FSLogix logs, profile-container access, storage availability, and locks.\",\r\n        EvidenceText has_any (\"dns\", \"socket\", \"transport\", \"gateway\", \"network\", \"timeout\"),\r\n            \"Connectivity/timeout hypothesis: check client and host RDP logs, DNS, firewall/proxy, route, and reachability. Timeout alone does not locate the fault.\",\r\n        EvidenceText has_any (\"capacity\", \"available\", \"registration\", \"agent\"),\r\n            \"Host/availability hypothesis: check host health, registration, agent logs, drain mode, and capacity; confirm against the full message.\",\r\n        EvidenceText has_any (\"license\", \"licensing\", \"permission\", \"denied\", \"authorization\"),\r\n            \"Access/licensing hypothesis: check assignments, authorization, licenses, and applicable policy.\",\r\n        \"Unclassified: use the exact code, symbolic name, operation, source, and checkpoint sequence; do not infer a cause from this workbook.\")\r\n    | extend Routing=case(ServiceError == true,\r\n        \"ServiceError=true: investigate Microsoft service health and escalate to Microsoft with UTC time, resource, and CorrelationId.\",\r\n        ServiceError == false,\r\n        \"ServiceError=false: administrator investigation indicated; not proof of user fault.\",\r\n        \"ServiceError not recorded: ownership undetermined.\");\r\nErrorsWithGuidance\r\n| summarize ErrorRecords=count(), FirstSeenUTC=min(TimeGenerated), LastSeenUTC=max(TimeGenerated),\r\n    KnownUsers=make_set_if(UserName, isnotempty(UserName), 100),\r\n    UnknownUserRecords=countif(isempty(UserName))\r\n    by HostPool, ResourceId, Code, CodeSymbolic, Message, Source, Operation, ActivityType,\r\n        ServiceError, InvestigationHint, Routing\r\n| order by ErrorRecords desc, LastSeenUTC desc",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Error patterns and investigation guidance",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "Exact error messages",
+      "content": {
+        "description": "One row per recorded error, including errors without matching connection records. Copy the full message and CorrelationId for investigation or escalation.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nlet ErrorsWithGuidance =\r\n    Events\r\n    | where EventTable == \"WVDErrors\"\r\n    | extend EvidenceText=tolower(strcat(CodeSymbolic, \" \", Message))\r\n    | extend InvestigationHint=case(\r\n        EvidenceText has_any (\"authentication\", \"credential\", \"credentials\", \"logon\", \"aadsts\", \"unauthorized\"),\r\n            \"Identity/sign-in hypothesis: check Entra sign-in logs, MFA/Conditional Access, credentials, and session-host logon events.\",\r\n        EvidenceText has_any (\"fslogix\", \"profile\", \"vhd\", \"vhdx\"),\r\n            \"Profile hypothesis: check FSLogix logs, profile-container access, storage availability, and locks.\",\r\n        EvidenceText has_any (\"dns\", \"socket\", \"transport\", \"gateway\", \"network\", \"timeout\"),\r\n            \"Connectivity/timeout hypothesis: check client and host RDP logs, DNS, firewall/proxy, route, and reachability. Timeout alone does not locate the fault.\",\r\n        EvidenceText has_any (\"capacity\", \"available\", \"registration\", \"agent\"),\r\n            \"Host/availability hypothesis: check host health, registration, agent logs, drain mode, and capacity; confirm against the full message.\",\r\n        EvidenceText has_any (\"license\", \"licensing\", \"permission\", \"denied\", \"authorization\"),\r\n            \"Access/licensing hypothesis: check assignments, authorization, licenses, and applicable policy.\",\r\n        \"Unclassified: use the exact code, symbolic name, operation, source, and checkpoint sequence; do not infer a cause from this workbook.\")\r\n    | extend Routing=case(ServiceError == true,\r\n        \"ServiceError=true: investigate Microsoft service health and escalate to Microsoft with UTC time, resource, and CorrelationId.\",\r\n        ServiceError == false,\r\n        \"ServiceError=false: administrator investigation indicated; not proof of user fault.\",\r\n        \"ServiceError not recorded: ownership undetermined.\");\r\nErrorsWithGuidance\r\n| project TimeUTC=TimeGenerated, UserName, HostPool, ResourceId, SessionHostName, CorrelationId,\r\n    Code, CodeSymbolic, Message, Source, Operation, ActivityType, ServiceError, Routing, InvestigationHint\r\n| order by TimeUTC desc, ResourceId asc, CorrelationId asc",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Exact error messages",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "Disconnect evidence by connection",
+      "content": {
+        "description": "One row per resource/activity with Completed evidence. Error proximity uses +/-2 minutes around FIRST Completed only, within the selected window. No inference of unexpected disconnect, logoff, or root cause.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nlet ConnectionSummary =\r\n    Events\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize StartedUTC=minif(TimeGenerated, State =~ \"Started\"),\r\n        ConnectedUTC=minif(TimeGenerated, State =~ \"Connected\"),\r\n        FirstCompletedUTC=minif(TimeGenerated, State =~ \"Completed\"),\r\n        LastCompletedUTC=maxif(TimeGenerated, State =~ \"Completed\"),\r\n        DisconnectRecords=countif(State =~ \"Completed\"),\r\n        UserName=take_anyif(UserName, isnotempty(UserName)),\r\n        SessionHostName=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, HostPool, CorrelationId\r\n    | where DisconnectRecords > 0;\r\nlet ErrorSummary =\r\n    Events | where EventTable == \"WVDErrors\" and isnotempty(CorrelationId)\r\n    | summarize ErrorRecords=count(), FirstErrorUTC=min(TimeGenerated), LastErrorUTC=max(TimeGenerated)\r\n        by ResourceId, CorrelationId;\r\nlet NearDisconnect =\r\n    Events | where EventTable == \"WVDErrors\" and isnotempty(CorrelationId)\r\n    | join kind=inner (ConnectionSummary | project ResourceId, CorrelationId, FirstCompletedUTC)\r\n        on ResourceId, CorrelationId\r\n    | where TimeGenerated between ((FirstCompletedUTC - 2m) .. (FirstCompletedUTC + 2m))\r\n    | summarize ErrorsWithin2mOfFirstCompleted=count() by ResourceId, CorrelationId;\r\nConnectionSummary\r\n| join kind=leftouter ErrorSummary on ResourceId, CorrelationId\r\n| join kind=leftouter NearDisconnect on ResourceId, CorrelationId\r\n| extend ErrorRecords=coalesce(ErrorRecords, long(0)),\r\n    ErrorsWithin2mOfFirstCompleted=coalesce(ErrorsWithin2mOfFirstCompleted, long(0))\r\n| extend Assessment=case(ErrorsWithin2mOfFirstCompleted > 0,\r\n    \"Error near first Completed; inspect timeline. Association only, not a confirmed cause.\",\r\n    ErrorRecords > 0, \"Errors elsewhere in this activity/window; cause of disconnect undetermined.\",\r\n    \"No recorded matching error; normal ending or missing diagnostic evidence remains possible.\")\r\n| project FirstCompletedUTC, LastCompletedUTC, UserName, HostPool, ResourceId, SessionHostName,\r\n    CorrelationId, StartedUTC, ConnectedUTC, DisconnectRecords, ErrorRecords,\r\n    FirstErrorUTC, LastErrorUTC, ErrorsWithin2mOfFirstCompleted, Assessment\r\n| order by FirstCompletedUTC desc",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Disconnect evidence by connection",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "Auto-reconnect chain",
+      "content": {
+        "description": "Uses only the documented predecessor link, not inferred matching by user/time. The activity-ID filter selects the current activity; predecessor lookup still uses the selected pool/window. Clear the ID or paste the predecessor ID to view its timeline.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nlet Predecessors =\r\n    Raw | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize PreviousCompletedUTC=maxif(TimeGenerated, State =~ \"Completed\")\r\n        by ResourceId, PredecessorConnectionId=CorrelationId;\r\nEvents\r\n| where EventTable == \"WVDConnections\" and isnotempty(CorrelationId) and isnotempty(PredecessorConnectionId)\r\n| summarize FirstReconnectEventUTC=min(TimeGenerated),\r\n    ReconnectedUTC=minif(TimeGenerated, State =~ \"Connected\"),\r\n    UserName=take_anyif(UserName, isnotempty(UserName)),\r\n    SessionHostName=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n    by ResourceId, HostPool, CorrelationId, PredecessorConnectionId\r\n| join kind=leftouter Predecessors on ResourceId, PredecessorConnectionId\r\n| extend ObservedGapSeconds=iff(isnotnull(PreviousCompletedUTC) and isnotnull(ReconnectedUTC)\r\n    and ReconnectedUTC >= PreviousCompletedUTC,\r\n    datetime_diff(\"second\", ReconnectedUTC, PreviousCompletedUTC), long(null))\r\n| extend Evidence=case(isnull(PreviousCompletedUTC),\r\n    \"Explicit predecessor link; previous Completed absent from pool/window.\",\r\n    isnull(ReconnectedUTC), \"Auto-reconnect activity recorded; Connected not observed in window.\",\r\n    ReconnectedUTC < PreviousCompletedUTC, \"Timing inconsistent; inspect raw timeline.\",\r\n    \"Explicit auto-reconnect link with both timestamps. Gap is not total user downtime.\")\r\n| project FirstReconnectEventUTC, ReconnectedUTC, PreviousCompletedUTC, ObservedGapSeconds,\r\n    UserName, HostPool, ResourceId, SessionHostName, CorrelationId, PredecessorConnectionId, Evidence\r\n| order by FirstReconnectEventUTC desc",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "Auto-reconnect chain",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 3,
+      "name": "UTC event timeline",
+      "content": {
+        "description": "Chronological connection states, exact errors, and raw checkpoint parameters. Equal timestamps do not establish order. User/host identity may be enriched from the same resource/activity in this window. Narrow time/user/activity for large results.",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "query": "let WindowStart = {TimeRange:start};\r\nlet WindowEnd = {TimeRange:end};\r\nlet Raw = materialize(\r\n    union isfuzzy=true\r\n        (datatable(TimeGenerated:datetime, Type:string, _ResourceId:string,\r\n            CorrelationId:string, UserName:string, State:string, SessionHostName:string,\r\n            PredecessorConnectionId:string, Code:long, CodeSymbolic:string,\r\n            Message:string, ServiceError:bool, Source:string, Operation:string,\r\n            ActivityType:string, Name:string, Parameters:dynamic)[]),\r\n        WVDConnections, WVDErrors, WVDCheckpoints\r\n    | where TimeGenerated between (WindowStart .. WindowEnd)\r\n    | extend ResourceId=tolower(_ResourceId), UserName=tolower(UserName)\r\n    | where 'All' in ({HostPool}) or ResourceId in~ ({HostPool})\r\n    | project TimeGenerated, EventTable=Type, ResourceId,\r\n        HostPool=extract(@\"(?i)/hostpools/([^/]+)\", 1, ResourceId),\r\n        CorrelationId=tolower(CorrelationId), UserName, State, SessionHostName,\r\n        PredecessorConnectionId=tolower(PredecessorConnectionId),\r\n        Code, CodeSymbolic, Message, ServiceError, Source, Operation,\r\n        ActivityType, Checkpoint=Name, Parameters\r\n);\r\nlet ConnectionIdentity =\r\n    Raw\r\n    | where EventTable == \"WVDConnections\" and isnotempty(CorrelationId)\r\n    | summarize KnownUser=take_anyif(UserName, isnotempty(UserName)),\r\n        KnownHost=take_anyif(SessionHostName, isnotempty(SessionHostName))\r\n        by ResourceId, CorrelationId;\r\nlet FocusId = tolower(trim(@\"\\s+\", base64_decode_tostring('{CorrelationId:base64}')));\r\nlet Events = materialize(\r\n    Raw\r\n    | join kind=leftouter ConnectionIdentity on ResourceId, CorrelationId\r\n    | extend UserName=coalesce(UserName, KnownUser), SessionHostName=coalesce(SessionHostName, KnownHost)\r\n    | where 'All' in ({Users}) or UserName in~ ({Users})\r\n    | where isempty(FocusId) or CorrelationId == FocusId\r\n    | project-away KnownUser, KnownHost, ResourceId1, CorrelationId1\r\n);\r\nEvents\r\n| extend Event=case(EventTable == \"WVDErrors\", \"Error\",\r\n    EventTable == \"WVDCheckpoints\", strcat(\"Checkpoint: \", Checkpoint),\r\n    strcat(\"Connection: \", State))\r\n| project TimeUTC=TimeGenerated, Event, UserName, HostPool, ResourceId, SessionHostName,\r\n    CorrelationId, PredecessorConnectionId, Code, CodeSymbolic, Message, ServiceError,\r\n    Source, Operation, ActivityType, Checkpoint, Parameters\r\n| order by TimeUTC asc, ResourceId asc, CorrelationId asc, Event asc",
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 10000
+        },
+        "noDataMessage": "No matching records, not proof of no incidents. Check Diagnostic coverage, filters, retention, diagnostic settings, and query warnings/errors.",
+        "title": "UTC event timeline",
+        "showRefreshButton": true,
+        "exportToExcelOptions": "visible",
+        "showAnalytics": true,
+        "size": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "version": "KqlItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "queryType": 0
+      }
+    },
+    {
+      "type": 1,
+      "name": "Investigation checklist and limits",
+      "content": {
+        "json": "## Confirm the cause, do not guess it\r\n| Evidence | Follow-up |\r\n|---|---|\r\n| Exact error code + message + source | Investigate the named component/operation first. Save the original text, UTC timestamp, full resource ID, and CorrelationId. |\r\n| Completed without an error | Confirm whether the user ended/disconnected normally, policy ended the session, or telemetry is incomplete. Do not label every Completed as a fault. |\r\n| Explicit auto-reconnect | Inspect both current and predecessor activities; check client connectivity and session-host RDP logs. The link proves a reconnect relationship, not its cause. |\r\n| Checkpoint parameters | Inspect the actual fields recorded; checkpoint names and parameters are not a universal disconnect-reason schema. |\r\n| ServiceError=true | Check Azure Service Health and escalate to Microsoft with correlation evidence. |\r\n| Missing connection/user/checkpoint | Expand the UTC window, clear filters, verify diagnostic settings and retention, and check client/session-host logs. |\r\n\r\n**Collection prerequisites:** route host-pool **Connection**, **Error**, and **Checkpoint** diagnostic categories to this Log Analytics workspace; historical events are not backfilled. Error/checkpoint records from workspace/application-group resources are retained under their own resource IDs when all resources are selected; they are not forcibly joined to a host-pool activity.\r\n\r\n**Missing tables:** queries tolerate absent diagnostic tables through an empty typed union leg, but query warnings and Diagnostic coverage must be reviewed. Access failures or other query errors must be resolved, not treated as an empty healthy result. Some client failures never reach the AVD service and therefore have no service diagnostics.\r\n\r\n**Scope and display:** correlation is resource + nonempty activity ID and only within the selected window. Sessions crossing a window boundary can have missing start/end/identity. Counts are records, not unique failures; no failure rate is inferred. Tables display at most 10,000 rows and the query service has its own result limits. Narrow the scope or use Open in Logs for a complete incident investigation. Exports and raw checkpoint parameters can contain personal or environment data; handle securely.\r\n\r\n### Microsoft references\r\n- [Diagnostic setup and state meanings](https://learn.microsoft.com/azure/virtual-desktop/diagnostics-log-analytics)\r\n- [WVDErrors schema](https://learn.microsoft.com/azure/azure-monitor/reference/tables/wvderrors)\r\n- [WVDConnections schema](https://learn.microsoft.com/azure/azure-monitor/reference/tables/wvdconnections)\r\n- [WVDCheckpoints schema](https://learn.microsoft.com/azure/azure-monitor/reference/tables/wvdcheckpoints)"
+      }
+    }
+  ],
+  "isLocked": false,
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "version": "Notebook/1.0"
+}
